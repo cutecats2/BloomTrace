@@ -12,32 +12,39 @@ class AIService {
   Future<ScannedProduct> analyzeProduct(Uint8List imageBytes) async {
     final prompt = [
       Content.multi([
-        TextPart(
-          "You are a grocery AI. Analyze this product image and return a JSON object: "
-          "{'name': string, 'recalled': bool, 'nutritionScore': number 0-100}. "
-          "Output only JSON."
-        ),
-        DataPart('image/jpeg', imageBytes),
-      ])
+    TextPart(
+        "Analyze this product for safety and nutrition. "
+        "Return JSON with EXACTLY these keys: "
+        "{ 'name': string, 'recalled': boolean, 'recall_reason': string, ... } "
+        "CRITICAL: Always include 'recalled'. If no recall is found, set 'recalled' to false "
+        "and set 'recall_reason' to 'No active recalls found as of 2026.'"
+        "Return ONLY a JSON object: "
+        "{"
+        "  'name': 'string', "
+        "  'recalled': boolean, "
+        "  'recall_reason': 'string or null', " // This is where the info goes
+        "  'nutrition': {'calories': int, 'protein': 'string', 'fat': 'string', 'carbs': 'string'}, "
+        "  'nutritionScore': number"
+        "}"
+      ),
+      DataPart('image/jpeg', imageBytes),
+    ])
     ];
 
     final response = await _model.generateContent(prompt);
-    final text = response.text;
+      final text = response.text;
 
-    if (text == null) throw Exception("No response from AI");
+      if (text == null) throw Exception("No response from AI");
 
-    final jsonStart = text.indexOf('{');
-    final jsonEnd = text.lastIndexOf('}');
-    if (jsonStart == -1 || jsonEnd == -1) throw Exception("Invalid JSON: $text");
+      // 1. Clean the response (Gemini often wraps JSON in ```json ... ```)
+      final cleanedJson = text.replaceAll('```json', '').replaceAll('```', '').trim();
 
-    final jsonString = text.substring(jsonStart, jsonEnd + 1);
-    final data = jsonDecode(jsonString);
+      // 2. Decode the string into a Map
+      final Map<String, dynamic> data = jsonDecode(cleanedJson);
 
-    return ScannedProduct(
-      name: data['name'] ?? 'Unknown',
-      recalled: data['recalled'] ?? false,
-      nutritionScore: (data['nutritionScore'] ?? 0).toDouble(),
-      scannedAt: DateTime.now(),
-    );
+      // 3. Use the .fromJson factory we built in the model
+      // This automatically handles the nested Nutrition and Recall fields
+      return ScannedProduct.fromJson(data);
+    }
   }
-}
+
